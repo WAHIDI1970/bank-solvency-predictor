@@ -1,109 +1,75 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
 from sklearn.preprocessing import StandardScaler
+import numpy as np
 
-# Set up the app
-st.set_page_config(page_title="Bank Solvency Predictor", layout="centered")
-st.title("Bank Client Solvency Prediction")
-st.markdown("""
-Predict whether a client will be solvent (0) or non-solvent (1) based on financial information.
-The model uses Logistic Regression with optimal threshold.
-""")
+# Charger le modèle
+model_data = joblib.load("REGLOG.pkl")
+model = model_data['model']
+threshold = model_data['threshold']
 
-# Load the model and scaler
-@st.cache_resource
-def load_model():
-    try:
-        model_data = joblib.load('REGLOG.pkl')
-        return model_data['model'], model_data['threshold']
-    except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return None, None
+# Page config
+st.set_page_config(page_title="Prédicteur de Solvabilité", layout="centered")
 
-model, optimal_threshold = load_model()
+st.title("🔍 Prédiction de Solvabilité Bancaire")
+st.markdown("Entrez les caractéristiques d'un client pour prédire s'il est **solvable** ou **non solvable**.")
 
-# Input form
-with st.form("client_info"):
-    st.subheader("Client Information")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        age = st.number_input("Age", min_value=18, max_value=100, value=30)
-        marital = st.selectbox("Marital Status", 
-                             options=[1, 2, 3, 4, 5],
-                             format_func=lambda x: ["Single", "Married", "Divorced", "Widowed", "Other"][x-1])
-        expenses = st.number_input("Monthly Expenses ($)", min_value=0, value=1000)
-    
-    with col2:
-        income = st.number_input("Monthly Income ($)", min_value=0, value=2000)
-        amount = st.number_input("Loan Amount Requested ($)", min_value=0, value=5000)
-        price = st.number_input("Item Price ($)", min_value=0, value=6000)
-    
-    submitted = st.form_submit_button("Predict Solvency")
+# Fonction de prédiction
+def predict(data):
+    df = pd.DataFrame([data])
+    scaled = scaler.transform(df)
+    proba = model.predict_proba(scaled)[0][1]
+    prediction = int(proba >= threshold)
+    return prediction, proba
 
-# Make prediction when form is submitted
-if submitted and model:
-    # Create input dataframe
-    input_data = pd.DataFrame({
-        'Age': [age],
-        'Marital': [marital],
-        'Expenses': [expenses],
-        'Income': [income],
-        'Amount': [amount],
-        'Price': [price]
-    })
+# Entrée manuelle
+with st.form("client_form"):
+    age = st.slider("Âge", 18, 100, 35)
+    status = st.selectbox("Statut marital", options=[1, 2, 3], format_func=lambda x: {1: "Célibataire", 2: "Marié(e)", 3: "Autre"}[x])
+    expenses = st.number_input("Dépenses mensuelles", min_value=0.0, value=100.0)
+    income = st.number_input("Revenu mensuel", min_value=0.0, value=200.0)
+    amount = st.number_input("Montant de crédit", min_value=0.0, value=800.0)
+    price = st.number_input("Prix de l'achat", min_value=0.0, value=1000.0)
     
-    # Scale the input data (same as during training)
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(input_data)
-    
-    # Get probabilities
-    proba = model.predict_proba(scaled_data)[0]
-    prediction = (proba[1] >= optimal_threshold).astype(int)
-    
-    # Display results
-    st.subheader("Prediction Results")
-    
-    if prediction == 1:
-        st.error("Prediction: Non-Solvable (1) - High risk of default")
-    else:
-        st.success("Prediction: Solvable (0) - Low risk of default")
-    
-    # Show probabilities
-    st.markdown("### Prediction Probabilities")
-    proba_df = pd.DataFrame({
-        'Status': ['Solvable (0)', 'Non-Solvable (1)'],
-        'Probability': [proba[0], proba[1]]
-    })
-    
-    # Display probability bar chart
-    st.bar_chart(proba_df.set_index('Status'))
-    
-    # Show feature importance if available
-    try:
-        if hasattr(model.named_steps['model'], 'coef_'):
-            coefficients = model.named_steps['model'].coef_[0]
-            importance_df = pd.DataFrame({
-                'Feature': input_data.columns,
-                'Importance': np.abs(coefficients)
-            }).sort_values('Importance', ascending=False)
-            
-            st.markdown("### Most Important Features")
-            st.dataframe(importance_df.style.format({'Importance': '{:.3f}'}))
-    except:
-        pass
+    submitted = st.form_submit_button("Prédire")
 
-elif submitted and not model:
-    st.warning("Model not loaded properly. Please check the model file.")
+    if submitted:
+        input_data = {
+            'Age': age,
+            'Status': status,
+            'Expenses': expenses,
+            'Income': income,
+            'Amount': amount,
+            'Price': price
+        }
+        prediction, proba = predict(input_data)
+        st.success(f"Résultat : {'Non Solvable 🔴' if prediction == 1 else 'Solvable ✅'}")
+        st.info(f"Probabilité de non solvabilité : {proba:.2%}")
 
-# Add some sample data for testing
-st.sidebar.markdown("### Sample Data Values")
-st.sidebar.write("""
-- **Solvable Client**:
-  - Age: 30, Married, Expenses: 1000, Income: 3000, Amount: 2000, Price: 2500
-- **Non-Solvable Client**:
-  - Age: 25, Single, Expenses: 1500, Income: 1500, Amount: 5000, Price: 6000
-""")
+# Chargement d'un fichier CSV
+st.markdown("---")
+st.header("📄 Prédictions en Lot")
+file = st.file_uploader("Téléversez un fichier CSV", type="csv")
+
+if file:
+    data_csv = pd.read_csv(file)
+    scaled_data = scaler.transform(data_csv)
+    probas = model.predict_proba(scaled_data)[:, 1]
+    predictions = (probas >= threshold).astype(int)
+    
+    data_csv["Prédiction"] = predictions
+    data_csv["Probabilité_Non_Solvabilité"] = probas
+    
+    st.write("🔎 Résultats :")
+    st.dataframe(data_csv)
+    
+    csv_output = data_csv.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Télécharger les résultats", data=csv_output, file_name="predictions.csv", mime="text/csv")
+
+# Initialisation du scaler (le même que pendant l'entraînement)
+scaler = StandardScaler()
+# IMPORTANT : Redéfinir l’ordre des colonnes utilisé à l'entraînement
+columns = ['Age', 'Status', 'Expenses', 'Income', 'Amount', 'Price']
+scaler.fit(pd.DataFrame(columns=columns, data=np.zeros((1, len(columns)))))  # dummy fit to enable transform
+
